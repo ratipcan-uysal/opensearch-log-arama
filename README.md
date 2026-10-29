@@ -1,8 +1,10 @@
 # OpenSearch'te log arama
 
-Doğru sorgu, güvenilir sonuç. Geliştirici, QA ve operasyon ekipleri için 26 slaytlık (16 ana slayt + 10 ek) Türkçe sunum.
+[**PDF’yi indir**](https://github.com/ratipcan-uysal/opensearch-log-arama/raw/refs/heads/main/opensearch-log-arama.pdf) · [**PowerPoint’i indir**](https://github.com/ratipcan-uysal/opensearch-log-arama/raw/refs/heads/main/opensearch-log-arama.pptx)
 
-[**PDF’yi aç**](opensearch-log-arama.pdf) · [**PowerPoint’i indir**](opensearch-log-arama.pptx)
+[![Sunum önizlemesi: DSL ve PPL nereden çalıştırılır?](assets/sunum-onizleme.png)](opensearch-log-arama.pdf)
+
+Doğru sorgu, güvenilir sonuç. Geliştirici, QA ve operasyon ekipleri için 26 slaytlık (16 ana slayt + 10 ek) Türkçe sunum.
 
 16 ana slayt ve 10 ekte normal arama kalıpları, DSL/PPL kullanım yerleri, API üzerinden LLM ile agentic search ve 31 kaynak aynı dosyada yer alır.
 
