@@ -1,0 +1,7 @@
+source = logs_demo
+| where `@timestamp` >= timestamp('2026-10-29 10:00:00')
+  and `@timestamp` < timestamp('2026-10-29 10:15:00')
+| where environment = 'prod'
+  and status_code >= 500 and status_code < 600
+| stats count() as errors by service_name
+| sort - errors

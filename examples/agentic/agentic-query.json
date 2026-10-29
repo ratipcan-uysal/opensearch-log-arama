@@ -1,0 +1,13 @@
+{
+  "query": {
+    "agentic": {
+      "query_text": "checkout prod, 29 Oct 2026 10:00-10:15 UTC: 5xx",
+      "query_fields": [
+        "@timestamp",
+        "service_name",
+        "environment",
+        "status_code"
+      ]
+    }
+  }
+}

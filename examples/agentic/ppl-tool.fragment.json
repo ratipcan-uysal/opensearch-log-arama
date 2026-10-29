@@ -1,0 +1,7 @@
+{
+  "type": "PPLTool",
+  "parameters": {
+    "model_id": "REPLACE_WITH_REGISTERED_MODEL_ID",
+    "execute": false
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "intent": "error_count_by_service",
+  "dataset": "logs_demo",
+  "environment": "prod",
+  "start_utc": "2026-10-29T10:00:00Z",
+  "end_utc_exclusive": "2026-10-29T10:15:00Z",
+  "status_gte": 500,
+  "status_lt": 600
+}

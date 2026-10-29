@@ -1,0 +1,50 @@
+{
+  "size": 0,
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "range": {
+            "@timestamp": {
+              "gte": "2026-10-29T10:00:00Z",
+              "lt": "2026-10-29T10:15:00Z"
+            }
+          }
+        },
+        {
+          "term": {
+            "service_name": "checkout"
+          }
+        },
+        {
+          "term": {
+            "environment": "prod"
+          }
+        },
+        {
+          "term": {
+            "event_kind": "request_completed"
+          }
+        },
+        {
+          "exists": {
+            "field": "status_code"
+          }
+        }
+      ]
+    }
+  },
+  "aggs": {
+    "server_errors": {
+      "filter": {
+        "range": {
+          "status_code": {
+            "gte": 500,
+            "lt": 600
+          }
+        }
+      }
+    }
+  },
+  "track_total_hits": true
+}

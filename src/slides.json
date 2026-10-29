@@ -1,0 +1,625 @@
+[
+  {
+    "title": "OpenSearch’te\nlog arama",
+    "kind": "cover",
+    "subtitle": "Doğru sorgu, güvenilir sonuç",
+    "tag": "Pratik sorgular, üretim kararları ve LLM ile inceleme",
+    "sources": [
+      "S01"
+    ],
+    "notes": "Hedef kitle: log okuyan geliştirici, QA ve operasyon ekipleri. Temel HTTP/JSON bilgisi varsayılır. Örnekler sentetiktir. Açık kaynak OpenSearch temel alınır. Amazon OpenSearch Service önerileri ayrıca etiketlenir. Belgeler 29 Ekim 2026 tarihinde kontrol edilmiştir. Arayüz ve eklenti yetenekleri sürüme göre değişebilir."
+  },
+  {
+    "title": "Bir olay incelemesinin ilk adımları",
+    "kind": "steps",
+    "rows": [
+      [
+        "01",
+        "Kapsam",
+        "İndeks veya data stream, servis ve ortam."
+      ],
+      [
+        "02",
+        "Zaman",
+        "Olay zamanıyla dar pencere. Saat dilimi açık."
+      ],
+      [
+        "03",
+        "Belirti",
+        "5xx, timeout veya gecikme. Bir kaydı aç."
+      ],
+      [
+        "04",
+        "Bağlam",
+        "trace_id ile ilişkili servisleri incele."
+      ]
+    ],
+    "bottom": "Devir kaydı: sorgu + mutlak zaman aralığı + örnek olay kimliği",
+    "sources": [
+      "S01",
+      "S19"
+    ],
+    "notes": "Önerilen çalışma sırasıdır, ürünün zorunlu akışı değildir. Önce dar bir pencere seç, ihtiyaç oldukça genişlet. Trace ile devam ederken ilk servisin filtresini kaldırmak gerekebilir. @timestamp burada olay zamanına eşlenmiştir. Gözlem zamanı ayrı tutulur, saat farkı ve gecikmiş teslim incelenir. Log korelasyonu tek başına kök neden kanıtı değildir."
+  },
+  {
+    "title": "Alan türü, sorgunun anlamını değiştirir",
+    "kind": "table",
+    "headers": [
+      "Alan",
+      "Tür",
+      "Kullanım"
+    ],
+    "rows": [
+      [
+        "service_name, environment",
+        "keyword",
+        "Tam değerle filtre"
+      ],
+      [
+        "trace_id, event_id",
+        "keyword",
+        "Korelasyon ve kimlik"
+      ],
+      [
+        "message",
+        "text",
+        "Terim veya phrase araması"
+      ],
+      [
+        "status_code, duration_ms",
+        "integer / float",
+        "Aralık ve ölçüm"
+      ],
+      [
+        "@timestamp",
+        "date",
+        "Olay zamanını sınırla"
+      ]
+    ],
+    "bottom": "“.keyword” yalnızca mapping’de tanımlıysa vardır.",
+    "sources": [
+      "S03",
+      "S04",
+      "S12"
+    ],
+    "notes": "Bu alan adları eğitim şemasıdır, OpenTelemetry veya ECS standardı olarak sunulmaz. Örnekte service_name doğrudan keyword türündedir; service_name.keyword yoktur. term analiz edilmiş message üzerinde beklenmedik sonuç verebilir. match_phrase analizörün ürettiği terim sırasını arar, ham metnin byte düzeyinde eşitliği anlamına gelmez. Sık kullanılan alanları açıkça tanımlamak kontrolsüz alan artışını önlemeye yardım eder. strict mapping bilinmeyen alanları reddeder; bu nedenle hatalı kayıt takibi gerekir."
+  },
+  {
+    "title": "DSL ve PPL nereden çalıştırılır?",
+    "kind": "entrypoints",
+    "sources": [
+      "S01",
+      "S08",
+      "S23",
+      "S24",
+      "S25",
+      "S30"
+    ],
+    "notes": "Query DSL: OpenSearch Dashboards içindeki Dev Tools konsolunda HTTP metodu, yol ve JSON gövdesiyle kullanılır. Aynı Search API curl, Postman veya bir uygulamanın OpenSearch istemcisinden çağrılabilir. PPL: klasik menüde OpenSearch Plugins > Query Workbench > PPL, ardından Run. Dev Tools içinden de POST /_plugins/_ppl endpointine JSON gövde gönderilebilir. SQL/PPL eklentisi ve PPL desteğinin açık olması gerekir. OpenSearch 3.5 ile gelen yeni Observability workspace içindeki Discover > Logs ekranı PPL kullanır; gerekli feature flag, workspace ve dataset yapılandırması kontrol edilir. Klasik Discover arama çubuğundaki DQL/Lucene ile Query DSL JSON aynı şey değildir. PPL API örneği küçük eğitim indeksini gösterir; gerçek log incelemesinde zaman ve ortam filtresi gerekir. Kimlik doğrulama dağıtıma bağlıdır; yönetilen AWS domaininde IAM kullanılıyorsa SigV4 imzası gerekir. API anahtarını prompt veya repo içine koyma."
+  },
+  {
+    "title": "DQL: 5xx ve eksik alan tuzağı",
+    "kind": "dql",
+    "code": "service_name: \"checkout\" and environment: \"prod\"\nand status_code >= 500 and status_code < 600",
+    "code2": "status_code:* and not status_code: 200",
+    "bottom": "Phrase örneği: message: \"connection timeout\"",
+    "sources": [
+      "S02",
+      "S04"
+    ],
+    "notes": "Discover zaman aralığı: 29 Ekim 2026 10:00 dahil, 10:15 hariç UTC. Sorgunun metni UI zaman filtresini içermez; paylaşırken ikisini birlikte kaydet. İlk sorgu HTTP 5xx aralığını sınırlar. İkinci sorgu alanı bulunan ve 200 olmayan kayıtları seçer; 3xx/4xx de dahildir, dolayısıyla hata tanımı değildir. Yalnız not status_code:200 kullanılırsa alanı eksik kayıtlar da gelebilir. Phrase eşleşmesi message analizörüne bağlıdır."
+  },
+  {
+    "title": "Günlük incelemede işe yarayan DQL kalıpları",
+    "kind": "recipes",
+    "rows": [
+      [
+        "Belirli olay",
+        "event_id: \"evt-011\""
+      ],
+      [
+        "İki seviye + gecikme",
+        "level: (ERROR or WARN) and duration_ms >= 1000"
+      ],
+      [
+        "İki kelime de bulunsun",
+        "message: connection and message: timeout"
+      ],
+      [
+        "Eksik korelasyon",
+        "not trace_id:*"
+      ],
+      [
+        "Servis öneki",
+        "service_name: check*"
+      ]
+    ],
+    "bottom": "Ortak kapsam: doğru indeks + zaman + ortam. AND/OR için parantez kullan.",
+    "sources": [
+      "S02",
+      "S03",
+      "S04",
+      "S10"
+    ],
+    "notes": "Bunlar klasik Discover DQL arama çubuğu örnekleridir. duration_ms birimi bu eğitim şemasında milisaniyedir. message:connection and message:timeout iki terimi de arar; sıralarının bitişik olması gerekmez. message:\"connection timeout\" analizörle phrase eşleşmesi yapar. Tam kimlikleri keyword alanında ara. not trace_id:* indexed değeri eksik olayları bulur; boş string ile aynı şey değildir. Fixture bütün kayıtlarda trace_id içerdiğinden bu sorgunun boş dönmesi beklenir. Prefix check* mevcut keyword service_name için uygundur; baştaki *check* daha pahalı olabilir. Eklerde zaman aralığı, trace ID, alan varlığı, OR ve DSL should davranışına ilişkin ek kalıplar bulunur. Sorgular canlı motorda çalıştırılmadı."
+  },
+  {
+    "title": "Query DSL: sınırları görünür bir arama",
+    "kind": "dsl",
+    "code": "GET logs_demo/_search\n{\n  \"size\": 20, \"track_total_hits\": false,\n  \"_source\": [\"@timestamp\", \"trace_id\", \"message\"],\n  \"sort\": [{\"@timestamp\": \"desc\"}, {\"event_id\": \"desc\"}],\n  \"query\": {\"bool\": {\"filter\": [\n    {\"term\": {\"service_name\": \"checkout\"}},\n    {\"term\": {\"environment\": \"prod\"}},\n    {\"range\": {\"@timestamp\": {\n      \"gte\": \"2026-10-29T10:00:00Z\",\n      \"lt\":  \"2026-10-29T10:15:00Z\"\n    }}},\n    {\"range\": {\"status_code\": {\"gte\": 500, \"lt\": 600}}}\n  ]}}\n}",
+    "sources": [
+      "S05",
+      "S08"
+    ],
+    "notes": "filter belgeleri evet/hayır koşullarıyla eler ve relevance skoru üretmez. event_id örnekte benzersiz keyword olarak deterministik ikincil sıralama sağlar. _source seçimi dönen veriyi sınırlar; indeks taramasını otomatik olarak aynı oranda azaltacağı iddia edilmez. track_total_hits:false tam sayımı kapatır, hata oranı hesabında aynı ayar kullanılmaz. should ile alternatif koşullar zorunlu tutulacaksa minimum_should_match açıkça belirtilmelidir. examples/search.json aynı arama semantiğinin ek gösterim alanları içeren tam dosyasıdır."
+  },
+  {
+    "title": "PPL: hangi servis daha çok 5xx üretiyor?",
+    "kind": "ppl",
+    "code": "source = logs_demo\n| where `@timestamp` >= timestamp('2026-10-29 10:00:00')\n  and `@timestamp` < timestamp('2026-10-29 10:15:00')\n| where environment = 'prod'\n  and status_code >= 500 and status_code < 600\n| stats count() as errors by service_name\n| sort - errors",
+    "bottom": "Bu çıktı hata sayısını verir. Hata oranı için toplam istek sayısı da gerekir.",
+    "sources": [
+      "S06",
+      "S07",
+      "S20",
+      "S21"
+    ],
+    "notes": "Örnek oturumu UTC olarak varsayar. timestamp() dönüşümleri ve tarih karşılaştırmaları için hedef motor ve oturum zaman dilimi kontrol edilmelidir. UI zaman seçicisinin API çağrılarına otomatik taşındığı varsayılmaz, bu yüzden sorguda açık zaman sınırları vardır. stats gruplama yapar, sort azalan sayıya göre sıralar. Zaman serisi için stats count() as errors by span(`@timestamp`, 1m), service_name kullanılabilir. Yüksek kardinaliteli gruplamalarda PPL çevirisi ve kullanılan toplama stratejisi yaklaşık sonuç üretebilir. Sentetik örnek beklenen sonucu: checkout 3, catalog 1. Gerçek motor üzerinde çalıştırılmış test sonucu değildir."
+  },
+  {
+    "title": "Daha az hata, daha yüksek hata oranı",
+    "kind": "ratio",
+    "headers": [
+      "Örnek pencere",
+      "5xx",
+      "Tamamlanan istek",
+      "5xx oranı"
+    ],
+    "rows": [
+      [
+        "Önce",
+        "50",
+        "10.000",
+        "%0,5"
+      ],
+      [
+        "Sonra",
+        "40",
+        "1.000",
+        "%4,0"
+      ]
+    ],
+    "bottom": "Hata sayısı azaldı. Hata oranı 8 katına çıktı.",
+    "sources": [
+      "S08",
+      "S09"
+    ],
+    "notes": "Tamamı sentetik aritmetik örnektir. 50/10000 = 0,005 ve 40/1000 = 0,04. Aynı servis, ortam ve eşit uzunluktaki zaman pencereleri varsayılır. Pay ve payda aynı tamamlanan istek evreninden üretilmelidir. Her istek için tek terminal kayıt gerekir. Retry, duplicate, sampling ve kayıp loglar oranı bozabilir. Üretim alarmında gecikme/SLO ve güvenilir istek metriğiyle birlikte değerlendirme önerilir. Tamamlanan istek oranı, hiç tamamlanmayan veya hiç loglanmayan istekleri kapsamaz. Top-N terms bütün dağılım değildir; hata sınırı ve dışarıda kalan belge sayısı ayrıca incelenir."
+  },
+  {
+    "title": "Arama maliyetini belirleyen seçimler",
+    "kind": "pairs",
+    "rows": [
+      [
+        "Kapsam",
+        "Doğru indeks, dar zaman aralığı, alan bazlı filtre."
+      ],
+      [
+        "Metin",
+        "Baştaki * ve geniş regex taramalarını sınırla."
+      ],
+      [
+        "Sonuç",
+        "Küçük size, gerekli _source alanları, gerektiğinde tam sayım."
+      ],
+      [
+        "Sayfalama",
+        "Derin taramada PIT + search_after. İş bitince PIT’i kapat."
+      ]
+    ],
+    "bottom": "Aynı sorgu ve veriyle ölçüm: istemci gecikmesi, took, shard sayısı ve kuyruk.",
+    "sources": [
+      "S08",
+      "S10",
+      "S11",
+      "S17"
+    ],
+    "notes": "Bunlar ölçülecek hipotezlerdir, belirli bir hızlanma yüzdesi vaat edilmez. PIT sabit veri görünümü sağlar, açık kaldığı sürece segment ve kaynak tutar. from+size derin sayfalarda pahalıdır. time filtresi her shard temasını otomatik olarak ortadan kaldırmaz. Profile API yalnız teşhiste kullanılmalı, ek yükü vardır ve ağ/kuyruk gecikmesini ölçmez. Çok yüksek kardinaliteli trace_id için terms gruplaması yerine bilinen kimlikle arama çoğu incelemeye daha uygundur. Üretimde cache hit garantisi verilmez."
+  },
+  {
+    "title": "Saklama ve shard planı",
+    "kind": "retention",
+    "number": "30–50 GiB",
+    "label": "AWS’nin log iş yükleri için shard başlangıç rehberi",
+    "rows": [
+      [
+        "Data stream",
+        "Zaman serisi logları tek ad altında toplar."
+      ],
+      [
+        "Rollover",
+        "Boyut veya yaş eşiğiyle yeni yazma indeksine geçer."
+      ],
+      [
+        "Retention",
+        "ISM ile yaşam döngüsü ve silme zamanı yönetilir."
+      ]
+    ],
+    "bottom": "Rollover, eski veriyi silmez. Replica, yedek yerine geçmez.",
+    "sources": [
+      "S13",
+      "S14",
+      "S15"
+    ],
+    "notes": "30–50 GiB önerisi Amazon OpenSearch Service belgesine aittir, evrensel optimum veya sabit limit olarak sunulmaz. Kurtarma süresi, node kaynakları ve arama yüküyle doğrulanmalıdır. Data stream zaman alanı gerektirir. ISM rollover içindeki min_size toplam primary depolamasını, min_primary_shard_size tek primary shardı değerlendirir. Doğrudan rollover koşulları OR ile birleşir. ISM periyodik kontrol yaptığı için eşik aşılabilir. Yeni any_of sözdizimi sürüme bağlı olduğundan örneğe dahil edilmemiştir. Retention yaşının indeks oluşturma/rollover olayına göre nasıl hesaplandığını hedef politikada incele, olay zamanı için belge başına tam TTL varsayma. Saklama süresi iş ihtiyacına göre belirlenir; 7/30 gün gibi keyfî üretim önerisi verilmez."
+  },
+  {
+    "title": "Sonuca güvenmeden önce",
+    "kind": "pairs",
+    "rows": [
+      [
+        "Tamlık",
+        "timed_out ve _shards.failed kontrolü. Eksik log akışını izle."
+      ],
+      [
+        "Ingest",
+        "Bulk yanıtında errors ve her öğenin sonucu. Mapping reddini say."
+      ],
+      [
+        "Teşhis",
+        "Request ve shard slow loglarını ayır. Eşikleri açıkça belirle."
+      ],
+      [
+        "Gizlilik",
+        "Sırları indekslemeden çıkar. Yetkiyi servis/rol ihtiyacına göre daralt."
+      ]
+    ],
+    "bottom": "Maskeleyip yeni bir alan üretmek, orijinal hassas alanı silmez.",
+    "sources": [
+      "S08",
+      "S16",
+      "S18",
+      "S22"
+    ],
+    "notes": "HTTP 200 tek başına tüm arama shardlarının veya tüm Bulk öğelerinin başarı kanıtı değildir. Kayıp akış için ingest gecikmesi, parse hataları, reddedilen kayıtlar ve karantina/dead letter mekanizması gözlenir. Request slow logs OpenSearch 2.12 ile eklenmiştir, yönetilen dağıtım desteği kontrol edilir. Çok düşük slow log eşikleri disk ve performans maliyeti yaratır. Data Prepper obfuscate işleminde target orijinali korur. Temiz alanı yazarken ham alanı da göndermemek gerekir. Field masking indeks sonrasında uygulanır ve arama yeteneğini sınırlar; veri azaltmanın yerine geçmez. Bu sunum herhangi bir uyumluluk sertifikası iddia etmez."
+  },
+  {
+    "title": "LLM ile API üzerinden log incelemesi",
+    "kind": "agent_choices",
+    "headers": [
+      "Yol",
+      "Ne sağlar",
+      "Kontrol noktası"
+    ],
+    "rows": [
+      [
+        "Uygulama agentı",
+        "DSL/PPL seçer, sonuçla yeni sorgu kurar",
+        "API öncesi doğrulama"
+      ],
+      [
+        "Yerleşik agentic search",
+        "Doğal dilden DSL üretir ve çalıştırır",
+        "Agent + search pipeline"
+      ],
+      [
+        "PPLTool",
+        "Doğal dilden PPL üretir",
+        "execute: false ile yalnız sorgu"
+      ]
+    ],
+    "bottom": "İlk sürüm önerisi: şablon seçen LLM + kontrollü API yürütücüsü.\nYürütme öncesi kontrol için sorgu üretimini aramadan ayır.",
+    "sources": [
+      "S26",
+      "S27",
+      "S28",
+      "S29"
+    ],
+    "notes": "İlk yol bir mimari öneridir: LLM servis/zaman/niyet parametrelerini çıkarır, backend izinli bir sorgu şablonunu oluşturur ve yürütür. Tam DSL üretimini açmak zorunlu değildir. Çok adımlı agent, ilk sorgunun sonucuna göre izinli araçlar arasında seçim yapar: servis bazında hata sayısı, önceki eşit pencereyle oran karşılaştırması, ardından bir trace_id için ilgili kayıtlar. Her aşamada sorgu ve kanıt kaydı tutulur. Tek doğal dil dönüşümü otomatik olarak çok adımlı inceleme veya kök neden tespiti sağlamaz. Yerleşik agentic query DSL üretir; PPLTool ayrı bir araçtır. PPLTool 2.13 ile eklendi ve execute varsayılanı true olduğu için yalnız üretim isteniyorsa false açıkça verilir. Model/connector ve desteklenen dağıtım gereklidir. Vector index bu örnekteki alan/aggregation araması için zorunlu değildir. LLM çağrısı gecikme ve model kullanım maliyeti ekler; başarı ve maliyet gerçek sorularla ölçülmelidir."
+  },
+  {
+    "title": "Yerleşik agentic search: API örneği",
+    "kind": "agent_api",
+    "code": "POST /logs_demo/_search?search_pipeline=logs-agentic\n{\n  \"query\": {\"agentic\": {\n    \"query_text\": \"checkout prod, 29 Oct 2026 10:00-10:15 UTC: 5xx\",\n    \"query_fields\": [\"@timestamp\", \"service_name\",\n                     \"environment\", \"status_code\"]\n  }}\n}",
+    "bottom": "query_fields modele ipucudur. Erişim yetkisi veya zorunlu filtre değildir.",
+    "sources": [
+      "S26",
+      "S27",
+      "S28"
+    ],
+    "notes": "Agentic query OpenSearch 3.2 ile eklendi. Önce erişimi yapılandırılmış model/connector, QueryPlanningTool içeren agent ve agentic_query_translator request processor içeren search pipeline gerekir. Örnek pipeline adı logs-agentic varsayılmıştır, var olduğu veya burada oluşturulduğu iddia edilmez. Gövde examples/agentic/agentic-query.json dosyasındadır. query_text doğal dil niyetidir, service/environment/time sınırlarının güvenilir bir yürütücü tarafından uygulanmasının yerine geçmez. Yerleşik akış ürettiği DSL sorgusunu yürütür; istemcinin sonradan sonucu kontrol etmesi yürütme öncesi engelleme değildir. Üretilmiş sorguyu yürütmeden incelemek zorunluysa ayrı üretim/doğrulama/yürütme katmanı tercih edilir. Yönetilen servis özellikleri açık kaynak sürümüyle birebir eşleşmeyebilir. Modeli, agentı veya pipelineı bu çalışma kapsamında kurmadık."
+  },
+  {
+    "title": "Agentın cevabını denetlenebilir kılan sınırlar",
+    "kind": "pairs",
+    "rows": [
+      [
+        "Yetki",
+        "Yalnız okuma. İndeks ve alan izinlerini backend uygular."
+      ],
+      [
+        "Bütçe",
+        "Zaman penceresi, sonuç sayısı ve araç çağrısı üst sınırı."
+      ],
+      [
+        "Kanıt",
+        "Sorgu + zaman aralığı + olay kimlikleri + kısmi sonuç durumu."
+      ],
+      [
+        "Durdurma",
+        "Belirsiz niyet, izin ihlali veya plan hatasında açık hata."
+      ]
+    ],
+    "bottom": "QueryPlanningTool varsayılan fallback’i match_all. Hata sessizce kaybolabilir.",
+    "sources": [
+      "S08",
+      "S28",
+      "S31"
+    ],
+    "notes": "Bu satırlar önerilen uygulama kontrolleridir. Yetkilendirme ve query doğrulaması modelin dışındaki yürütücüde uygulanır. Log mesajları güvenilmeyen veri kabul edilir; içlerindeki talimatlar araç yetkisini genişletmez. Ham hassas loglar yerine gerekli alanlar ve özetler modele verilir. Büyük wildcard/regex, script, izinsiz indeks, zaman filtresi yokluğu ve pahalı aggregation için izinli sorgu şablonları veya parse edilmiş yapıda doğrulama kullanılır. Basit string regex filtresi güvenlik sınırı sayılmaz. QueryPlanningTool güncel belgede LLM geçerli JSON üretemediğinde size:10 match_all fallback döndürebilir ve hata fırlatmaz. fallback_query ile daha dar/match_none davranışı seçilebilir, ama boş sonucu veri yok diye sunmamak için uygulama ayrıca planlama başarısızlığını görünür kılmalıdır. Üretilmiş DSL/çalıştırma kaydı ve tanılama telemetrisi yoksa bu ayrımı garanti etme. Değerlendirme ölçütleri: doğru filtre/sayım, kanıta dayalı yanıt, red/boş sonuç ayrımı, toplam gecikme ve LLM maliyeti. Bu çalışma bir agent güvenlik veya canlı performans testi değildir."
+  },
+  {
+    "title": "Ekibin kullanacağı küçük bir runbook",
+    "kind": "checklist",
+    "rows": [
+      [
+        "Aramadan önce",
+        "Mapping, sorgu dili, indeks ve UTC zaman aralığı."
+      ],
+      [
+        "İncelerken",
+        "Bir örnek kayıt, trace bağlamı ve karşılaştırma penceresi."
+      ],
+      [
+        "Sonuç yazarken",
+        "Pay/payda, kısmi sonuç kontrolü ve veri kapsamı."
+      ],
+      [
+        "Devrederken",
+        "Kaydedilmiş sorgu, olay kimliği ve yeniden çalıştırma adımı."
+      ]
+    ],
+    "bottom": "Ekler: sorgu rehberi, API çağrıları, agent örnekleri ve kaynakça",
+    "sources": [
+      "S01",
+      "S08",
+      "S19"
+    ],
+    "notes": "Bu runbook sunumun pratik önerisidir. Belgelere dayalı davranış ile ekibin operasyonel tercihini ayırır. Uygulama öncesinde hedef OpenSearch sürümü, dağıtım türü, SQL/PPL eklentisi ve mapping doğrulanır. Arama sorguları, sentetik fixture ve beklenen sonuçlar sunum eklerinde özetlenir. Örnekler canlı cluster üzerinde çalıştırılmamıştır. PDF üzerindeki kaynak bağlantıları ilgili resmî belgelere gider; tüm kaynakların kapsamı SOURCES.md dosyasındadır. Güncellemede normal arama kalıpları, DSL/PPL kullanım yüzeyleri ve LLM agentic arama seçenekleri eklendi."
+  },
+  {
+    "title": "Ek A · DQL arama rehberi",
+    "kind": "appendix_recipes",
+    "rows": [
+      [
+        "Sıralı ifade",
+        "message: \"connection timeout\""
+      ],
+      [
+        "İki terim de bulunsun",
+        "message: connection and message: timeout"
+      ],
+      [
+        "Alternatif HTTP kodu",
+        "status_code: (500 or 502 or 503)"
+      ],
+      [
+        "Tamamlanan istek",
+        "event_kind: request_completed"
+      ],
+      [
+        "Alan var ve boş değil",
+        "trace_id:* and not trace_id: \"\""
+      ],
+      [
+        "Göreli zaman",
+        "@timestamp >= \"now-15m\""
+      ]
+    ],
+    "bottom": "Metni serbest bırakınca DQL terimleri varsayılan olarak OR ile birleştirebilir.",
+    "sources": [
+      "S02",
+      "S03",
+      "S04"
+    ],
+    "notes": "Bu reçeteleri servis, ortam ve uygun zaman filtresiyle birleştir. Göreli zamanı olay devrinde mutlak UTC aralığına çevir. HTTP 5xx için status_code < 600 üst sınırını da ekle. trace_id bu şemada keyword, message text türündedir. Bir timestamp aralığı için alt sınır gte, üst sınır lt kullanılması ardışık pencerelerin sınır kaydını iki kez saymasını önler. Aynı kelimelerin aynı kayıtta bulunması ile aynı sıradaki phrase eşleşmesi farklıdır. Eksik/null indexed değer ve boş string farklıdır. .* regex ifadesi DQL wildcard sözdizimi değildir. Lucene ve DSL ayrı yüzeylerdir."
+  },
+  {
+    "title": "Ek B · DSL’de zorunlu alternatifler",
+    "kind": "code_notes",
+    "intro": "bool.filter veya must varken should varsayılan olarak zorunlu değildir.",
+    "code": "POST /logs_demo/_search\n{\n  \"size\": 20,\n  \"query\": {\"bool\": {\n    \"filter\": [\n      {\"term\": {\"environment\": \"prod\"}},\n      {\"range\": {\"@timestamp\": {\"gte\": \"now-15m\", \"lt\": \"now\"}}}\n    ],\n    \"should\": [\n      {\"term\": {\"status_code\": 500}},\n      {\"term\": {\"status_code\": 503}}\n    ],\n    \"minimum_should_match\": 1\n  }}\n}",
+    "bottom": "Bu örnek: prod + son 15 dakika + (500 veya 503).",
+    "sources": [
+      "S05",
+      "S08"
+    ],
+    "notes": "Sorgu örneği canlı ortamda çalıştırılmadı. now-15m, çağrı anına göre değerlendirilir. Sentetik fixture eski kalırsa boş dönmesi normaldir; tekrar üretilebilir incelemede sabit UTC aralığı seç. Bu örnekte minimum_should_match:1 kaldırılırsa status_code şartları zorunlu olmaz. should bir sıralama tercihi de olabilir; bir filtre alternatifi olarak kullanılacaksa niyeti açıkça belirt. Kullanıcı farklı servisleri arıyorsa yetkili indeks, servis ve environment kapsamı ayrıca daraltılır."
+  },
+  {
+    "title": "Ek C · PPL ile zaman serisi ve trace inceleme",
+    "kind": "two_code",
+    "intro": "Aşağıdaki parçalar aynı source, zaman ve ortam filtresinin devamıdır.",
+    "left_title": "Dakikalık 5xx sayısı",
+    "left_code": "| where status_code >= 500\n  and status_code < 600\n| stats count() as errors\n  by span(`@timestamp`, 1m),\n  service_name",
+    "right_title": "Tek trace içindeki olaylar",
+    "right_code": "| where trace_id = 'TRACE_ID'\n| sort `@timestamp`, event_id\n| fields `@timestamp`,\n  service_name, level, message",
+    "bottom": "Trace incelemesinde servis filtresi, diğer servislerdeki kayıtları gizleyebilir.",
+    "sources": [
+      "S06",
+      "S07",
+      "S19"
+    ],
+    "notes": "Kodlar sorgu parçalarıdır; tek başına çalıştırılacak tam sorgular değildir. Ana bölümdeki source=logs_demo ve açık UTC zaman sınırlarıyla birleştirilir. TRACE_ID gerçek bir yetkili kayıt kimliğiyle değiştirilir. Hata oranı için sadece error kayıtlarını saymak yeterli değildir, aynı istek evreninin tamamlanan istek sayısı gerekir. PPL sonuç sayıları özellikle yüksek kardinaliteli gruplamalarda motorun aggregation stratejisine bağlı yaklaşık olabilir. Süre ölçüsü kullanılıyorsa duration_ms birimi doğrulanır. Trace korelasyonu nedenselliği kanıtlamaz."
+  },
+  {
+    "title": "Ek D · API çağrıları ve yanıt kontrolü",
+    "kind": "api_curl",
+    "intro": "Örnek: HTTP Basic etkin test ortamı. OS_URL, kullanıcı ve parola ortamdan gelir.",
+    "code": "curl --user \"$OS_USER:$OS_PASSWORD\" \\\n  -H 'Content-Type: application/json' \\\n  \"$OS_URL/logs_demo/_search\" -d '{\n    \"size\":1,\"query\":{\"term\":{\"event_id\":\"evt-011\"}}\n  }'\n\ncurl --user \"$OS_USER:$OS_PASSWORD\" \\\n  -H 'Content-Type: application/json' \\\n  \"$OS_URL/_plugins/_ppl\" -d '{\n    \"query\":\"source=logs_demo | head 20\"\n  }'",
+    "bottom": "DSL: hits / aggregations. PPL: schema / datarows. Yanıt biçimleri farklıdır.",
+    "sources": [
+      "S08",
+      "S23",
+      "S30"
+    ],
+    "notes": "curl -d POST isteği gönderir. Parolayı komut metnine sabit yazma; kimlik doğrulama ortamın politikasına göre seçilir. IAM kimlik doğrulamalı AWS domaini için SigV4 gerekir; bu Basic örneği o ortama doğrudan uygulanmaz. Uygulama kodu veya Postman da aynı endpointlere yetkili isteği gönderebilir. PPL için SQL/PPL plugin desteği açık olmalıdır. Küçük eğitim indeksi dışında head 20 tek başına kapsam kontrolü değildir, zaman ve servis filtreleri eklenir. DSL yanıtında HTTP durumuna ek olarak timed_out, _shards.failed ve gerekiyorsa hits.total.relation incelenir. PPL hata durumunu, şema ve dönen satır kapsamını ayrı kontrol et. _plugins/_ppl/_explain planı gösterir; Calcite motorunda çıktı her zaman yalnız saf DSL olmayabilir.",
+    "extra": "PPL planı: POST /_plugins/_ppl/_explain"
+  },
+  {
+    "title": "Ek E · Yerleşik agentic kurulum parçaları",
+    "kind": "two_code",
+    "intro": "Önkoşul: erişimi tanımlı model/connector ve hedef sürümde ML Commons desteği.",
+    "left_title": "Agent kaydındaki araç",
+    "left_code": "\"tools\": [{\n  \"type\": \"QueryPlanningTool\",\n  \"parameters\": {\n    \"model_id\": \"MODEL_ID\",\n    \"response_filter\": \"JSONPATH\",\n    \"fallback_query\":\n      \"{\\\"query\\\":{\\\"match_none\\\":{}}}\"\n  }\n}]",
+    "right_title": "PUT /_search/pipeline/logs-agentic",
+    "right_code": "{\n  \"request_processors\": [{\n    \"agentic_query_translator\": {\n      \"agent_id\": \"AGENT_ID\"\n    }\n  }]\n}",
+    "bottom": "Yer tutucuları değiştir. match_none kullansan da planlama hatasını ayrı bildir.",
+    "sources": [
+      "S26",
+      "S27",
+      "S28"
+    ],
+    "notes": "Sol tarafta tam HTTP agent register gövdesi değil, tools bölümü gösterilir. Agent POST /_plugins/_ml/agents/_register ile kaydedilir. Flow agent içinde response_filter model sağlayıcısının gerçek yanıt biçimine göre ayarlanmalıdır. QueryPlanningTool generation_type:user_templates, izinli search template seçimleri için kullanılabilir. Sağ taraf search pipeline için tam JSON gövdesidir. match_none fallback kapsamı daraltır, ancak planlama başarısızlığını başarıyla bulunmuş sıfır kayıtla ayırmak için ek telemetri/durum gerekir. Güncel belgede fallback hata fırlatmayabilir. Native pipeline üretimi çalıştırmadan durduran bir uygulama kapısı değildir. Kesin ön doğrulama gereken işte dış yürütücü tasarlanmalıdır."
+  },
+  {
+    "title": "Ek F · Agent için önerilen API sözleşmesi",
+    "kind": "two_code",
+    "intro": "Uygulama önerisi: LLM niyet ve parametre seçer, backend izinli şablonu kurar.",
+    "left_title": "Örnek uygulama planı",
+    "left_code": "{\n  \"intent\":\"error_count_by_service\",\n  \"dataset\":\"logs_demo\",\n  \"environment\":\"prod\",\n  \"start_utc\":\"2026-10-29T10:00:00Z\",\n  \"end_utc\":\"2026-10-29T10:15:00Z\"\n}",
+    "right_title": "Yalnız PPL üretme seçeneği",
+    "right_code": "{\n  \"type\": \"PPLTool\",\n  \"parameters\": {\n    \"model_id\": \"MODEL_ID\",\n    \"execute\": false\n  }\n}",
+    "bottom": "Yanıt: çalıştırılan sorgu + veri kapsamı + kanıt kimlikleri + belirsizlik.",
+    "sources": [
+      "S23",
+      "S28",
+      "S29",
+      "S31"
+    ],
+    "notes": "Soldaki JSON önerilen bir uygulama sözleşmesidir, yerleşik OpenSearch endpoint gövdesi değildir. end_utc bu sözleşmede hariç üst sınırdır. Backend kimlikten dataset/alan izinlerini türetir ve zamanı, çıktıyı, aggregation maliyetini, araç sayısını ve toplam süreyi sınırlar. LLM bu sınırları arttıramaz. Sağdaki JSON agent tools alanına konan bir parçadır. Agent yürütme endpointi POST /_plugins/_ml/agents/AGENT_ID/_execute ve PPLTool için parametreler index ve question içerir. execute:false açıkça seçilir, çünkü varsayılan true olabilir. Log içeriğindeki talimatlar veri olarak kalır. Arama hatası, izin reddi, sıfır sonuç ve eksik veri için farklı durumlar dönülür. Yanıt kanıtla sınırlı olmalı, kök neden kanıtlanmadıysa hipotez olarak sunulmalıdır. Değerlendirme gerçek ekip sorularının beklenen filtre/sayımlarıyla yapılır. Gizli anahtarlar prompt ve kaynak koduna girmez.",
+    "extra": "POST /_plugins/_ml/agents/{id}/_execute"
+  },
+  {
+    "title": "Ek G · Sonuçları yorumlarken teknik sınırlar",
+    "kind": "dense_pairs",
+    "rows": [
+      [
+        "Mapping",
+        "strict yeni alanı reddeder. Şema değişikliği ve karantina akışı gerekir."
+      ],
+      [
+        "Terms",
+        "Top-N tüm dağılım değildir. sum_other_doc_count ve hata sınırını incele."
+      ],
+      [
+        "PIT",
+        "Sabit veri görünümü sağlar. Kaynak tutar, iş bitince kimliği kapat."
+      ],
+      [
+        "ISM",
+        "min_size tüm primary’ler, min_primary_shard_size tek primary içindir."
+      ],
+      [
+        "Zaman",
+        "Olay ve gözlem zamanı farklıdır. Retention belge başına kesin TTL değildir."
+      ],
+      [
+        "Profile",
+        "Ek yük getirir. Ağ ve kuyruk süresini ölçmez."
+      ]
+    ],
+    "bottom": "Sürüm, mapping, veri kapsamı ve hata durumu birlikte değerlendirilir.",
+    "sources": [
+      "S09",
+      "S11",
+      "S12",
+      "S14",
+      "S17",
+      "S19"
+    ],
+    "notes": "ISM doğrudan rollover koşulları OR ile birleşir. Kontroller periyodiktir, boyut eşiği aşılabilir. Saklama süresi iş gereksinimine göre seçilmelidir. QueryPlanningTool/PPLTool veya yeni Observability özelliklerinin bir yönetilen serviste varlığı, açık kaynak sürüm numarasından tek başına çıkarılmaz. Field masking indeks sonrasında uygulanır ve arama kısıtları vardır; veri azaltma yerine geçmez. Data Prepper target alanı orijinali koruyabilir. Replica yedekleme politikasının yerine geçmez."
+  },
+  {
+    "title": "Ek H · Örneklerin doğrulama kapsamı",
+    "kind": "dense_pairs",
+    "rows": [
+      [
+        "Veri",
+        "12 sentetik log. Gerçek müşteri veya üretim verisi yok."
+      ],
+      [
+        "DSL",
+        "checkout / prod / 10:00–10:15 UTC: evt-011, evt-003, evt-002."
+      ],
+      [
+        "PPL",
+        "Aynı pencerede prod 5xx: checkout 3, catalog 1."
+      ],
+      [
+        "Oran",
+        "Fixture: 3 / 7 tamamlanan istek ≈ %42,86. Slayt 9 ayrı örnektir."
+      ],
+      [
+        "Kontrol",
+        "JSON, alan türü, zaman sınırı ve aritmetik statik olarak doğrulandı."
+      ],
+      [
+        "Sınır",
+        "Canlı cluster, model bağlantısı ve gerçek LLM çağrısı testi yapılmadı."
+      ]
+    ],
+    "bottom": "Örnek sonuçlar beklenen değerlerdir. Üretim performansı veya başarı ölçümü değildir.",
+    "sources": [
+      "S08"
+    ],
+    "notes": "Hedef sürüm, dağıtım ve kimlik doğrulama bilgisi verilmedi. Gerçek ortam kabulünde ayrı eğitim indeksinde sorgular çalıştırılmalı; izin, şema, boş sonuç ve timeout senaryoları doğrulanmalıdır. Ana oran tablosu 50/10000 ve 40/1000 hesabından oluşur, 8 kat değişim aritmetik olarak kontrol edilmiştir. Snapshot, device veya bir üretim ortamı doğrulaması iddia edilmez. Örnek agent/pipeline kurulumu yapılmadı. Sunumun kaynak kodu ve sentetik fixture ileride GitHub için saklanabilir; anlatıyı takip etmek için ayrı dosya zorunlu değildir."
+  },
+  {
+    "title": "Ek I · Kaynakça (1/2)",
+    "kind": "source_list",
+    "keys": [
+      "S01",
+      "S02",
+      "S03",
+      "S04",
+      "S05",
+      "S06",
+      "S07",
+      "S08",
+      "S09",
+      "S10",
+      "S11",
+      "S12",
+      "S13",
+      "S14",
+      "S15",
+      "S16"
+    ],
+    "sources": [],
+    "notes": "Araştırma: 29 Ekim 2026. Her başlık tıklanabilir özgün kaynak bağlantısıdır. latest belgeleri zamanla değişebilir. Sayısal örnekler, uygulama agentı mimarisi ve runbook bu çalışma için hazırlanmış sentezdir."
+  },
+  {
+    "title": "Ek I · Kaynakça (2/2)",
+    "kind": "source_list",
+    "keys": [
+      "S17",
+      "S18",
+      "S19",
+      "S20",
+      "S21",
+      "S22",
+      "S23",
+      "S24",
+      "S25",
+      "S26",
+      "S27",
+      "S28",
+      "S29",
+      "S30",
+      "S31"
+    ],
+    "sources": [],
+    "notes": "Araştırma: 29 Ekim 2026. Her başlık tıklanabilir özgün kaynak bağlantısıdır. latest belgeleri zamanla değişebilir. Sayısal örnekler, uygulama agentı mimarisi ve runbook bu çalışma için hazırlanmış sentezdir."
+  }
+]

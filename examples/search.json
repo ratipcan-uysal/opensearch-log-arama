@@ -1,0 +1,51 @@
+{
+  "size": 20,
+  "track_total_hits": false,
+  "_source": [
+    "@timestamp",
+    "service_name",
+    "status_code",
+    "trace_id",
+    "message"
+  ],
+  "sort": [
+    {
+      "@timestamp": "desc"
+    },
+    {
+      "event_id": "desc"
+    }
+  ],
+  "query": {
+    "bool": {
+      "filter": [
+        {
+          "range": {
+            "@timestamp": {
+              "gte": "2026-10-29T10:00:00Z",
+              "lt": "2026-10-29T10:15:00Z"
+            }
+          }
+        },
+        {
+          "term": {
+            "service_name": "checkout"
+          }
+        },
+        {
+          "term": {
+            "environment": "prod"
+          }
+        },
+        {
+          "range": {
+            "status_code": {
+              "gte": 500,
+              "lt": 600
+            }
+          }
+        }
+      ]
+    }
+  }
+}
